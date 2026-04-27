@@ -1,67 +1,182 @@
--- 08_test_queries_FINAL.sql
--- Hệ thống quản lý Karaoke - Sinh viên: B23DCCE014
--- Mục đích: Demo luồng nghiệp vụ hoàn chỉnh và kiểm tra các ràng buộc bảo mật
+-- 08_test_queries.sql
+-- Hệ thống quản lý Karaoke
+-- Mục đích: Demo luồng nghiệp vụ hoàn chỉnh và kiểm tra một số ràng buộc
 
 -- ============================================================================
--- KỊCH BẢN 1: ĐẶT PHÒNG VÀ KIỂM TRA TRÙNG LỊCH (TRƯỚC CHECK-IN) 
+-- KỊCH BẢN 1: ĐẶT PHÒNG VÀ KIỂM TRA TRÙNG LỊCH
 -- ============================================================================
 
--- 1. Lễ tân (ID: 2) tạo phiếu đặt phòng cho khách Kevin Nguyễn vào Phòng P101 (ID: 1)
-CALL sp_create_booking('BOOK-014-A', 1, 1, 2, '2026-04-27 21:00:00', '2026-04-27 23:00:00', 5, 'Khách VIP');
+-- 1. Lễ tân tạo phiếu đặt phòng cho khách Kevin Nguyễn vào phòng P101.
+CALL sp_create_booking(
+    'BOOK-DEMO-001',
+    1,
+    1,
+    2,
+    '2026-04-27 21:00:00',
+    '2026-04-27 23:00:00',
+    5,
+    'Khách VIP đặt trước'
+);
 
--- 2. TEST TRÙNG LỊCH (PHẢI BÁO LỖI): Cố tình đặt phòng P101 vào khung giờ đang bận [cite: 463]
--- (Nếu chạy dòng này, PostgreSQL phải báo lỗi "Trùng lịch với một đặt phòng khác")
--- CALL sp_create_booking('BOOK-014-B', 2, 1, 2, '2026-04-27 22:00:00', '2026-04-27 23:59:00', 3, 'Khách vãng lai');
+-- 2. Test trùng lịch: bỏ comment dòng dưới để kiểm tra hệ thống chặn đặt trùng phòng.
+-- CALL sp_create_booking(
+--     'BOOK-DEMO-002',
+--     2,
+--     1,
+--     2,
+--     '2026-04-27 22:00:00',
+--     '2026-04-27 23:30:00',
+--     3,
+--     'Booking trùng giờ để test'
+-- );
+
+SELECT * FROM vw_booking_schedule;
+
 
 -- ============================================================================
--- KỊCH BẢN 2: CHECK-IN VÀ GỌI MÓN (CÓ HỦY ĐƠN ĐỂ TEST HOÀN KHO)
+-- KỊCH BẢN 2: CHECK-IN, GỌI MÓN, HỦY ĐƠN VÀ HOÀN KHO
 -- ============================================================================
 
--- 3. Khách đến nhận phòng thực tế (Dùng chính ID Booking vừa tạo)
+-- 3. Khách đến nhận phòng.
 CALL sp_check_in_booking(1, 2, 5);
 
--- 4. Gọi món: Khách gọi 10 lon Tiger Bạc (ID: 1)
-INSERT INTO service_orders (session_id, created_by_employee_id, order_status) VALUES (1, 2, 'draft');
-INSERT INTO service_order_items (service_order_id, item_id, quantity, unit_price) VALUES (1, 1, 10, 30000);
-CALL sp_confirm_service_order(1); -- Chốt đơn, kho trừ 10 lon
+SELECT * FROM vw_active_room_sessions;
 
--- 5. TEST HỦY ĐƠN (HOÀN KHO): Khách trả lại 10 lon bia, thực hiện hủy đơn 
-CALL sp_cancel_service_order(1); -- Trạng thái sang cancelled, kho cộng trả lại 10 lon
+-- 4. Tạo đơn nháp: 10 lon Tiger Bạc.
+INSERT INTO service_orders (session_id, created_by_employee_id, order_status)
+VALUES (1, 4, 'draft');
 
--- 6. Gọi món mới: 5 lon Tiger Bạc và 1 đĩa Khô gà (ID: 2)
-INSERT INTO service_orders (session_id, created_by_employee_id, order_status) VALUES (1, 2, 'draft');
-INSERT INTO service_order_items (service_order_id, item_id, quantity, unit_price) VALUES (2, 1, 5, 30000), (2, 2, 1, 80000);
+INSERT INTO service_order_items (service_order_id, item_id, quantity, unit_price)
+VALUES (1, 1, 10, 30000);
+
+CALL sp_confirm_service_order(1);
+
+-- Kiểm tra tồn kho sau khi xác nhận đơn.
+SELECT item_name, stock_quantity
+FROM menu_items
+WHERE item_id = 1;
+
+-- 5. Hủy đơn đã xác nhận để kiểm tra hoàn kho.
+CALL sp_cancel_service_order(1);
+
+SELECT item_name, stock_quantity
+FROM menu_items
+WHERE item_id = 1;
+
+-- 6. Tạo đơn mới: 5 lon Tiger Bạc + 1 đĩa khô gà.
+INSERT INTO service_orders (session_id, created_by_employee_id, order_status)
+VALUES (1, 4, 'draft');
+
+INSERT INTO service_order_items (service_order_id, item_id, quantity, unit_price)
+VALUES
+(2, 1, 5, 30000),
+(2, 6, 1, 80000);
+
 CALL sp_confirm_service_order(2);
 
--- ============================================================================
--- KỊCH BẢN 3: ĐỔI PHÒNG (TEST TÍNH TIỀN LIÊN TỤC) [cite: 354-362, 374-385]
--- ============================================================================
-
--- 7. Khách muốn đổi từ P101 sang phòng VIP P201 (ID: 3)
-CALL sp_transfer_room(1, 3, 2, 'Khách muốn không gian riêng tư hơn');
-
--- Kiểm tra xem tiền phòng P101 đã được ghi nhận vào tổng chưa (View doanh thu phòng)
-SELECT * FROM vw_revenue_by_room;
-
--- ============================================================================
--- KỊCH BẢN 4: THANH TOÁN VÀ PHỤ THU
--- ============================================================================
-
--- 8. Kết thúc phiên hát (Check-out) - Giảm giá 10,000đ
-CALL sp_check_out_booking(1, 3, 10000, 'INV-23DCCE014-01');
-
--- 9. Thêm phụ thu: Khách làm vỡ ly (Surcharge ID: 1) 
-CALL sp_add_invoice_surcharge(1, 1, 1, 3, 'Khách làm rơi ly lúc đổi phòng');
-
--- 10. XEM SỐ TIỀN THỰC TẾ TRƯỚC KHI THANH TOÁN (TRÁNH HARD-CODE) 
-SELECT invoice_number, total_amount FROM invoices WHERE invoice_id = 1;
-
--- 11. Xác nhận thanh toán (Dùng số tiền vừa xem được ở bước 10)
--- Lưu ý: Nếu điền sai số tiền thấp hơn total_amount, Procedure sẽ chặn lại [cite: 397]
-CALL sp_confirm_payment(1, 230000, 'cash', 'CASH_DIRECT', 3); -- Thay 230000 bằng số thực tế bạn thấy
-
--- ============================================================================
--- KỊCH BẢN 5: KIỂM TRA DASHBOARD CUỐI CÙNG
--- ============================================================================
-SELECT * FROM vw_dashboard_summary;
 SELECT * FROM vw_top_menu_items;
+
+
+-- ============================================================================
+-- KỊCH BẢN 3: ĐỔI PHÒNG
+-- ============================================================================
+
+-- 7. Khách đổi từ P101 sang P201 VIP.
+CALL sp_transfer_room(1, 4, 2, 'Khách muốn chuyển sang phòng VIP');
+
+-- Kiểm tra session sau đổi phòng.
+SELECT
+    rs.session_id,
+    rs.booking_id,
+    r.room_code,
+    rs.actual_start_time,
+    rs.actual_end_time,
+    rs.session_status,
+    rs.guest_count_actual
+FROM room_sessions rs
+JOIN rooms r ON rs.room_id = r.room_id
+WHERE rs.booking_id = 1
+ORDER BY rs.session_id;
+
+SELECT * FROM room_transfers;
+
+
+-- ============================================================================
+-- KỊCH BẢN 4: CHECK-OUT, PHỤ THU VÀ THANH TOÁN
+-- ============================================================================
+
+-- 8. Check-out, lập hóa đơn, giảm giá 10.000đ.
+CALL sp_check_out_booking(1, 3, 10000, 'INV-DEMO-001');
+
+SELECT * FROM vw_invoice_details;
+
+-- 9. Thêm phụ thu: khách làm vỡ 1 ly.
+CALL sp_add_invoice_surcharge(
+    1,
+    1,
+    1,
+    3,
+    'Khách làm rơi ly lúc đổi phòng'
+);
+
+-- 10. Thêm phụ thu theo đơn giá tùy chỉnh: hư hỏng micro.
+CALL sp_add_invoice_surcharge(
+    1,
+    4,
+    1,
+    3,
+    'Micro bị rơi, tính phí theo thực tế',
+    150000
+);
+
+SELECT * FROM vw_invoice_details;
+
+-- 11. Xác nhận thanh toán bằng đúng total_amount, không hard-code số tiền.
+DO $$
+DECLARE
+    v_total NUMERIC(12,2);
+BEGIN
+    SELECT total_amount
+    INTO v_total
+    FROM invoices
+    WHERE invoice_id = 1;
+
+    CALL sp_confirm_payment(1, v_total, 'cash', 'CASH_DIRECT', 3);
+END;
+$$;
+
+SELECT * FROM payments;
+SELECT * FROM vw_invoice_details;
+
+
+-- ============================================================================
+-- KỊCH BẢN 5: KIỂM TRA KHÓA DỮ LIỆU SAU THANH TOÁN
+-- ============================================================================
+
+-- Các câu dưới đây nên báo lỗi nếu bỏ comment, vì hóa đơn đã paid.
+
+-- CALL sp_add_invoice_surcharge(1, 2, 1, 3, 'Test thêm phụ thu sau thanh toán');
+
+-- UPDATE room_sessions
+-- SET actual_end_time = actual_end_time + INTERVAL '10 minutes'
+-- WHERE booking_id = 1;
+
+-- UPDATE service_order_items
+-- SET quantity = quantity + 1
+-- WHERE service_order_id = 2;
+
+
+-- ============================================================================
+-- KỊCH BẢN 6: XEM BÁO CÁO VÀ DASHBOARD
+-- ============================================================================
+
+SELECT * FROM vw_room_current_status;
+SELECT * FROM vw_daily_revenue;
+SELECT * FROM vw_monthly_revenue;
+SELECT * FROM vw_revenue_by_room;
+SELECT * FROM vw_revenue_by_room_type;
+SELECT * FROM vw_customer_spending;
+SELECT * FROM vw_customer_usage_history;
+SELECT * FROM vw_employee_transactions;
+SELECT * FROM vw_low_stock_items;
+SELECT * FROM vw_dashboard_summary;
