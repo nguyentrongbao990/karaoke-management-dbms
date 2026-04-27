@@ -1,0 +1,1 @@
+create database karaoke_management;
